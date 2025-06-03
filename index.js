@@ -1,123 +1,150 @@
 const { Telegraf } = require('telegraf');
-const bot = new Telegraf('8168359606:AAHu8EsJ-QL1aAVoO-oZOzNGal2lzjOhArU');
+const bot = new Telegraf('8060921789:AAF1iPhmqfk7rV5pl3yOT4fcUD4FZAOSo68'); // Bot token kamu
 
-const registeredGroups = new Set(); // ✅ Tambahkan baris ini di sini
+const registeredGroups = new Set();
+const DEVELOPER_ID = 7535364533;
 
-// Logging untuk debugging
+let antilinkOn = false;
+
+// Escape MarkdownV2
+const escapeMarkdown = (text) => {
+  return text.replace(/[_*[\]()~`>#+\-=|{}.!]/g, '\\$&');
+};
+
+// Logger
 bot.use((ctx, next) => {
   const username = ctx.from?.username || ctx.from?.first_name || ctx.from?.id;
   console.log(`[${new Date().toISOString()}] ${ctx.updateType} from ${username}`);
   return next();
 });
 
-// /start (khusus di PM) 
+// Repost dari developer
+bot.on('message', async (ctx, next) => {
+  if (ctx.chat.type === 'private' && ctx.from.id === DEVELOPER_ID) {
+    for (const groupId of registeredGroups) {
+      try {
+        if (ctx.message.text) {
+          await ctx.telegram.sendMessage(groupId, ctx.message.text);
+        } else if (ctx.message.photo) {
+          await ctx.telegram.sendPhoto(groupId, ctx.message.photo.at(-1).file_id, {
+            caption: ctx.message.caption || '',
+          });
+        } else if (ctx.message.document) {
+          await ctx.telegram.sendDocument(groupId, ctx.message.document.file_id, {
+            caption: ctx.message.caption || '',
+          });
+        } else if (ctx.message.video) {
+          await ctx.telegram.sendVideo(groupId, ctx.message.video.file_id, {
+            caption: ctx.message.caption || '',
+          });
+        }
+      } catch (err) {
+        console.error(`Gagal kirim ke grup ${groupId}:`, err.message);
+      }
+    }
+  }
+  return next();
+});
+
+// /start
 bot.start(async (ctx) => {
   if (ctx.chat.type === 'private') {
     return ctx.reply('Selamat datang di bot!\n\nGunakan /rules untuk melihat peraturan.');
   }
 
-  const DEVELOPER_ID = 7535364533; // Ganti dengan ID Telegram developer kamu
-
   const isAdmin = async (userId) => {
     try {
       const member = await ctx.telegram.getChatMember(ctx.chat.id, userId);
       return ['creator', 'administrator'].includes(member.status);
-    } catch (err) {
-      console.error('Gagal cek admin:', err);
+    } catch {
       return false;
     }
   };
 
   const isDevAdmin = await isAdmin(DEVELOPER_ID);
-
-  // Ambil info nama/username developer
-  let developerInfo = "@reyzzdb"; // default jika gagal ambil data
+  let developerInfo = "@Nyonzz14";
   try {
-    const devMember = await ctx.telegram.getChatMember(ctx.chat.id, DEVELOPER_ID);
-    const user = devMember.user;
-    developerInfo = user.username
-      ? `@${user.username}`
-      : `${user.first_name || ''} ${user.last_name || ''}`.trim();
-  } catch (err) {
-    console.warn("Gagal ambil info developer:", err.message);
-  }
+    const dev = await ctx.telegram.getChatMember(ctx.chat.id, DEVELOPER_ID);
+    developerInfo = dev.user.username ? `@${dev.user.username}` : dev.user.first_name;
+  } catch {}
 
   if (!isDevAdmin) {
-    return ctx.replyWithMarkdown(`👋 Halo *${ctx.from.first_name}*,\n\nDEVELOPER SAYA BELUM JADI ADMIN DI GRUP INI.\n\nJika ingin menggunakan bot, *masukkan dan admin-kan developer* terlebih dahulu.\n\n📌 Developer: ${developerInfo}`);
+    return ctx.replyWithMarkdown(`DEVELOPER BELUM ADMIN DI GRUP INI.\nAdmin-kan developer terlebih dahulu:\n\n📌 ${developerInfo}`);
   }
 
-registeredGroups.add(ctx.chat.id);
+  registeredGroups.add(ctx.chat.id);
   ctx.reply('Bot aktif dan siap digunakan di grup ini! 💪');
 });
 
-// /rules 
+// /rules
 bot.command('rules', (ctx) => {
-  ctx.reply(
-    '📝 RULES:\n' +
-    '1. Tidak spam\n' +
-    '2. Sopan terhadap semua anggota\n' +
-    '3. Tidak mengirim link tanpa izin\n' +
-    '4. Gunakan format yang benar\n' +
-    '5. Dilarang menggunakan bot untuk hal negatif\n' +
-    '6. Jika ada yang kurang mengerti tanya kan kepada developer'
-  );
+  ctx.reply(`📝 RULES:
+1. Tidak spam
+2. Sopan terhadap semua anggota
+3. Tidak mengirim link tanpa izin
+4. Gunakan format yang benar
+5. Dilarang menggunakan bot untuk hal negatif
+6. Jika ada yang kurang mengerti tanyakan kepada developer`);
 });
 
 // /antilink
 bot.command('antilink', (ctx) => {
-  if (ctx.chat.type === 'private') {
-    return ctx.reply('Perintah ini hanya bisa digunakan di grup.');
+  if (ctx.chat.type === 'private') return ctx.reply('Perintah ini hanya untuk grup.');
+  const args = ctx.message.text.split(' ')[1];
+
+  if (!args || !['on', 'off'].includes(args.toLowerCase())) {
+    return ctx.reply('Gunakan On / Off');
   }
-  
-  ctx.reply('🔗 Antilink aktif!\nLink yang dikirim akan dihapus otomatis.');
+
+  antilinkOn = args.toLowerCase() === 'on';
+  ctx.reply(`🔗 Antilink ${antilinkOn ? 'aktif' : 'nonaktif'}!`);
 });
 
-// Hapus pesan jika mengandung link (otomatis)
-bot.on('message', (ctx, next) => {
-  const messageText = ctx.message?.text || '';
-  const isLink = /https?:\/\/\S+|www\.\S+/gi.test(messageText);
+// Hapus link & status forward
+bot.on('message', async (ctx, next) => {
+  if (!antilinkOn || ctx.chat.type === 'private') return next();
 
-  if (isLink && ctx.chat.type !== 'private') {
-    ctx.deleteMessage().catch(() => {});
-    ctx.reply('⚠️ Link tidak diperbolehkan!').catch(() => {});
+  const msg = ctx.message;
+  const text = msg.text || msg.caption || '';
+  const isLink = /https?:\/\/\S+|www\.\S+/gi.test(text);
+  const isForwarded = msg.forward_from || msg.forward_from_chat;
+
+  if (isLink || isForwarded) {
+    try {
+      await ctx.deleteMessage();
+      await ctx.reply('⚠️ Link atau status tidak diperbolehkan!', {
+        reply_to_message_id: msg.message_id,
+      });
+    } catch (err) {
+      console.error('Gagal menghapus pesan:', err);
+    }
   } else {
-    next();
+    return next();
   }
 });
 
-// /tag (tag semua admin kecuali bot)
+// /tag
 bot.command('tag', async (ctx) => {
-  if (ctx.chat.type === 'private') {
-    return ctx.reply('Perintah ini hanya bisa digunakan di grup.');
-  }
-  
+  if (ctx.chat.type === 'private') return ctx.reply('Perintah ini hanya untuk grup.');
   try {
     const admins = await ctx.getChatAdministrators();
     const tags = admins
-      .filter(admin => !admin.user.is_bot)
-      .map(admin => admin.user.username ? `@${admin.user.username}` : `[${admin.user.first_name}](tg://user?id=${admin.user.id})`)
+      .filter(a => !a.user.is_bot)
+      .map(a => {
+        const name = escapeMarkdown(a.user.username ? `@${a.user.username}` : a.user.first_name);
+        return name;
+      })
       .join(' ');
-
-    if (tags) {
-      ctx.replyWithMarkdown(`🔔 Tag admin:\n${tags}`);
-    } else {
-      ctx.reply('Tidak ada admin yang bisa ditandai.');
-    }
-  } catch (err) {
-    console.error('Gagal mengambil daftar admin:', err);
+    ctx.reply(`🔔 Tag admin:\n${tags}`, { parse_mode: 'MarkdownV2' });
+  } catch {
     ctx.reply('Gagal mengambil admin.');
   }
 });
 
 // /rekap
 bot.command('rekap', (ctx) => {
-  if (ctx.chat.type === 'private') {
-    return ctx.reply('Fitur ini hanya bisa digunakan di grup.');
-  }
-
-  if (!registeredGroups.has(ctx.chat.id)) {
-    return ctx.reply('Grup ini belum terdaftar. Silakan gunakan perintah /start di grup ini untuk mendaftarkan grup.');
-  }
+  if (ctx.chat.type === 'private') return ctx.reply('Perintah ini hanya untuk grup.');
+  if (!registeredGroups.has(ctx.chat.id)) return ctx.reply('Grup belum terdaftar. Gunakan /start.');
 
   const text = ctx.message.reply_to_message?.text;
   if (!text) return ctx.reply('Balas pesan yang berisi data K dan B.');
@@ -125,38 +152,29 @@ bot.command('rekap', (ctx) => {
   const parse = (section) =>
     [...section.matchAll(/(\w+)\s+(\d+)/g)].map(([, , angka]) => Number(angka));
 
-  const kMatch = text.match(/K:\s*([\s\S]*?)\nB:/);
-  const bMatch = text.match(/B:\s*([\s\S]*)/);
+  const k = text.match(/K:\s*([\s\S]*?)\nB:/i);
+  const b = text.match(/B:\s*([\s\S]*)/i);
 
-  const kList = kMatch ? parse(kMatch[1]) : [];
-  const bList = bMatch ? parse(bMatch[1]) : [];
+  const kList = k ? parse(k[1]) : [];
+  const bList = b ? parse(b[1]) : [];
 
   const totalK = kList.reduce((a, b) => a + b, 0);
   const totalB = bList.reduce((a, b) => a + b, 0);
   const total = totalK + totalB;
 
   let selisih = '';
-  if (totalK > totalB) {
-    selisih = `\n\n🐟 B masih kekurangan ${totalK - totalB} untuk menyamai K.`;
-  } else if (totalB > totalK) {
-    selisih = `\n\n🐠 K masih kekurangan ${totalB - totalK} untuk menyamai B.`;
-  }
+  if (totalK > totalB) selisih = `\n\n🐟 B masih kurang [ -${totalK - totalB} ]`;
+  else if (totalB > totalK) selisih = `\n\n🐠 K masih kurang [ -${totalB - totalK} ]`;
+  else selisih = `\n\n🐠 K dengan B telah seimbang`;
 
-  ctx.reply(
-    `🔵 K: [${kList.join(', ')}] = ${totalK}  \n\n🔵 B: [${bList.join(', ')}] = ${totalB}${selisih}\n\n💰 Saldo Anda seharusnya: ${total} K`
-  );
+  ctx.reply(`🔵 K: [${kList.join(', ')}] = ${totalK}\n\n🔵 B: [${bList.join(', ')}] = ${totalB}${selisih}\n\n💰 Total Saldo: ${total} K`);
 });
 
-// /win 
+// /win
 bot.command('win', (ctx) => {
-  if (ctx.chat.type === 'private') {
-    return ctx.reply('Fitur ini hanya bisa digunakan di grup.');
-  }
-  
-  if (!registeredGroups.has(ctx.chat.id)) {
-    return ctx.reply('Grup ini belum terdaftar. Silakan gunakan perintah /start di grup ini untuk mendaftarkan grup.');
-  }
-  
+  if (ctx.chat.type === 'private') return ctx.reply('Perintah ini hanya untuk grup.');
+  if (!registeredGroups.has(ctx.chat.id)) return ctx.reply('Grup belum terdaftar. Gunakan /start.');
+
   const text = ctx.message.reply_to_message?.text;
   if (!text) return ctx.reply('Balas pesan yang berisi data K dan B.');
 
@@ -164,59 +182,46 @@ bot.command('win', (ctx) => {
     return [...section.matchAll(/(\w+)\s+(\d+)(\s*lf)?/gi)].map(([, nama, angkaStr, lfFlag]) => {
       const angka = parseInt(angkaStr);
       const isLf = !!lfFlag;
-      const fee = hitungFee(angka);
+      const fee = Math.floor((angka - 1) / 10) + 1;
       const total = isLf ? angka - fee : angka + angka - fee;
       return { nama, angka, total, isLf };
     });
   };
-// hitung fee admin
-  const hitungFee = (jumlah) => {
-    if (jumlah < 1) return 0;
-    return Math.floor(jumlah / 10) + (jumlah % 10 === 0 ? 0 : 1);
-  };
 
-  const kMatch = text.match(/K:\s*([\s\S]*?)\nB:/i);
-  const bMatch = text.match(/B:\s*([\s\S]*)/i);
+  const k = text.match(/K:\s*([\s\S]*?)\nB:/i);
+  const b = text.match(/B:\s*([\s\S]*)/i);
 
-  const kList = kMatch ? parse(kMatch[1]) : [];
-  const bList = bMatch ? parse(bMatch[1]) : [];
+  const kList = k ? parse(k[1]) : [];
+  const bList = b ? parse(b[1]) : [];
 
-  const formatList = (list) => list.map(u =>
-    `${u.nama} ${u.angka} // ${u.total}${u.isLf ? ' lf' : ''}`
-  ).join('\n');
+  const formatList = (list) =>
+    list.map(u => `${u.nama} ${u.angka} // ${u.total}${u.isLf ? ' lf' : ''}`).join('\n');
 
-  ctx.reply(
-    `K:\n${formatList(kList)}\n\nB:\n${formatList(bList)}`
-  );
+  ctx.reply(`K:\n${formatList(kList)}\n\nB:\n${formatList(bList)}`);
 });
-// contoh (khusus PM)
+
+// /contoh (hanya di PM)
 bot.command('contoh', (ctx) => {
   if (ctx.chat.type !== 'private') return;
-
   ctx.reply(`Contoh Format:
 
-BESAR:
-TEST 10
-TEST 20
-TEST 30
-TEST 40
-TEST 50
+K:
+ORANG 100
+ORANG 150
+ORANG 200
 
-KECIL:
-TEST 5
-TEST 15
-TEST 25
-TEST 35
+B:
+ORANG 200
+ORANG 150
+ORANG 100
 
 Penjelasan:
-- List harus memiliki lebih dari dua item. 
-- Format harus memiliki titik dua (:) setelah setiap header seperti contoh 'BESAR:' dan 'KECIL:'. 
-- Dan nick tidak boleh memiliki angka contoh 'TEST123 10' 
-- Dan harus memiliki spasi pada nick contoh 'TEST 10' 
-- Dan jika ingin menggunakan emoji harus memiliki spasi pada nick contoh 'TEST 10 😂' 
-- Ini buat lu yg dongo pake nya dan nyalahin bot nya padahal yg lain bisa`);
+- List minimal 1 item
+- Gunakan tanda titik dua (:) tanpa di spasi antar K atau B
+- Nick tidak boleh angka semua
+- Format spasi harus benar`);
 });
 
-// Jalankan bot 
+// Jalankan bot
 bot.launch();
 console.log("🤖 Bot Rekap aktif...");
